@@ -1,7 +1,7 @@
 // src/App.jsx
-// Version 1.608D-refactored
+// Version 2.0 - Refactored for efficiency and testability
 
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useMemo, useRef, useLayoutEffect, useEffect, useCallback } from 'react'
 import { parseCsvFile } from './dataLoader.js'
 import {
   categorizeTransactions,
@@ -11,141 +11,366 @@ import {
 import TransactionTable from './TransactionTable.jsx'
 import SummaryTable from './SummaryTable.jsx'
 
+// Modal Components (keeping them in the same file as requested)
+const AddEntryModal = ({ show, entry, onEntryChange, onSave, onCancel }) => {
+  if (!show) return null;
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
+        <h2 className="text-2xl font-bold mb-4">New Transaction</h2>
+        {/* Date */}
+        <label className="block mb-3">
+          <span className="block text-sm mb-1">Date</span>
+          <input
+            type="date"
+            value={entry.date}
+            onChange={e => onEntryChange({ ...entry, date: e.target.value })}
+            className="w-full p-2 border rounded-lg"
+          />
+        </label>
+        {/* Description */}
+        <label className="block mb-3">
+          <span className="block text-sm mb-1">Description</span>
+          <input
+            type="text"
+            value={entry.description}
+            onChange={e => onEntryChange({ ...entry, description: e.target.value })}
+            className="w-full p-2 border rounded-lg"
+          />
+        </label>
+        {/* Amount */}
+        <label className="block mb-6">
+          <span className="block text-sm mb-1">Amount</span>
+          <input
+            type="number"
+            step="0.01"
+            value={entry.amount}
+            onChange={e => onEntryChange({ ...entry, amount: e.target.value })}
+            className="w-full p-2 border rounded-lg"
+          />
+        </label>
+        <div className="flex justify-end space-x-4">
+          <button onClick={onCancel} className="px-4 py-2 bg-gray-300 rounded-lg hover:bg-gray-400">
+            Cancel
+          </button>
+          <button onClick={onSave} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CategorizeModal = ({ 
+  show, 
+  transaction, 
+  keyword, 
+  selectedCategory, 
+  newCategoryName,
+  dictionary,
+  onKeywordChange,
+  onCategoryChange,
+  onNewCategoryChange,
+  onSave,
+  onCancel 
+}) => {
+  if (!show) return null;
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
+        <h2 className="text-2xl font-bold mb-4">
+          {transaction ? `Categorize: ${transaction.description}` : 'Add New Category'}
+        </h2>
+        {/* Keyword */}
+        <label className="block mb-3">
+          <span className="block text-sm mb-1">Keyword</span>
+          <input
+            type="text"
+            value={keyword}
+            onChange={e => onKeywordChange(e.target.value)}
+            className="w-full p-2 border rounded-lg"
+          />
+        </label>
+        {/* Existing Category */}
+        <label className="block mb-3">
+          <span className="block text-sm mb-1">Existing Category</span>
+          <select
+            value={selectedCategory}
+            onChange={e => onCategoryChange(e.target.value)}
+            className="w-full p-2 border rounded-lg mb-2"
+          >
+            <option value="">-- Select --</option>
+            {Object.keys(dictionary).map(cat => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
+          </select>
+        </label>
+        {/* New Category */}
+        <label className="block mb-6">
+          <span className="block text-sm mb-1">Or New Category</span>
+          <input
+            type="text"
+            value={newCategoryName}
+            onChange={e => onNewCategoryChange(e.target.value)}
+            placeholder="Enter new category name"
+            className="w-full p-2 border rounded-lg"
+          />
+        </label>
+        <div className="flex justify-end space-x-4">
+          <button onClick={onCancel} className="px-4 py-2 bg-gray-300 rounded-lg hover:bg-gray-400">
+            Cancel
+          </button>
+          <button onClick={onSave} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Extracted business logic functions for better testability
+export const createTransaction = (data, index = 0) => ({
+  id: `${Date.now()}-${index}`,
+  date: data.date,
+  description: data.description,
+  amount: parseFloat(data.amount) || 0
+});
+
+export const processImportedTransactions = (rawData, dictionary) => {
+  // Create all transactions first
+  const transactions = rawData.map((r, i) => createTransaction(r, i));
+  
+  // Categorize all transactions in bulk
+  const categorizedTxns = categorizeTransactions(transactions, dictionary);
+  
+  // Separate categorized and uncategorized in one pass
+  const categorized = [];
+  const uncategorized = [];
+  
+  categorizedTxns.forEach(txn => {
+    if (txn.category === 'Uncategorized') {
+      uncategorized.push(txn);
+    } else {
+      categorized.push(txn);
+    }
+  });
+  
+  return { categorized, uncategorized };
+};
+
+export const updateDictionary = (dictionary, keyword, selectedCategory, newCategoryName) => {
+  const updated = { ...dictionary };
+  let categoryName = selectedCategory;
+  
+  if (newCategoryName.trim()) {
+    categoryName = newCategoryName.trim();
+    updated[categoryName] = keyword.trim() ? [keyword.trim()] : [];
+  } else if (selectedCategory && keyword.trim()) {
+    updated[selectedCategory] = [...(updated[selectedCategory] || []), keyword.trim()];
+  }
+  
+  return { updated, categoryName };
+};
+
+export const recategorizeTransaction = (transaction, dictionary) => {
+  const recategorized = categorizeTransactions([transaction], dictionary)[0];
+  return recategorized;
+};
+
+// Main App Component
 export default function App() {
-  const [transactions, setTransactions] = useState(() => {
-    const raw = localStorage.getItem('spendingTxns')
-    try {
-      const parsed = raw ? JSON.parse(raw) : []
-      console.log('[App] Loaded transactions from localStorage:', parsed)
-      return parsed
-    } catch {
-      return []
-    }
-  })
-
-  const [dictionary, setDictionary] = useState(() => {
-    const saved = localStorage.getItem('spendingDict')
-    return saved ? JSON.parse(saved) : {
-      Gas: ['shell', 'exxon', 'chevron', 'bp'],
-      Coffee: ['starbucks', 'dunkin', 'peets'],
-      Groceries: ['whole foods', 'trader joe', 'aldi', 'kroger'],
-    }
-  })
-
+  const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
 
   const [showAddForm, setShowAddForm] = useState(false)
-  const [showCategorizeForm, setShowCategorizeForm] = useState(false)
   const [newEntry, setNewEntry] = useState({ date: '', description: '', amount: '' })
+
+  const [showCategorizeForm, setShowCategorizeForm] = useState(false)
   const [categorizeTxn, setCategorizeTxn] = useState(null)
   const [newKeyword, setNewKeyword] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
   const [newCategoryName, setNewCategoryName] = useState('')
 
+  const isInitialMount = useRef(true)
+  const pendingUncategorized = useRef([])
+
+  const defaultDict = {
+    Gas:       ['shell', 'exxon', 'chevron', 'bp'],
+    Coffee:    ['starbucks', 'dunkin', 'peets'],
+    Groceries: ['whole foods', 'trader joe', 'aldi', 'kroger'],
+  }
+
+  const [dictionary, setDictionary] = useState(() => {
+    const saved = localStorage.getItem('spendingDict')
+    return saved ? JSON.parse(saved) : defaultDict
+  })
+
+  // Keep dictionary in localStorage
   useEffect(() => {
     localStorage.setItem('spendingDict', JSON.stringify(dictionary))
   }, [dictionary])
 
+  // Load saved transactions synchronously
+  useLayoutEffect(() => {
+    const raw = localStorage.getItem('spendingTxns')
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw)
+        if (Array.isArray(arr)) {
+          console.log('[App] Loaded transactions from localStorage:', arr)
+          setTransactions(arr)
+        }
+      } catch (e) {
+        console.error('[App] JSON.parse failed:', e)
+      }
+    }
+  }, [])
+
+  // Persist transactions after the first mount
   useEffect(() => {
-    localStorage.setItem('spendingTxns', JSON.stringify(transactions))
+    if (isInitialMount.current) {
+      isInitialMount.current = false
+    } else {
+      try {
+        localStorage.setItem('spendingTxns', JSON.stringify(transactions))
+        console.log('[App] Saved transactions to localStorage:', transactions)
+      } catch (e) {
+        console.error('[App] Could not write to localStorage:', e)
+      }
+    }
   }, [transactions])
 
-  const assignCategory = useCallback(
-    (txn) => categorizeTransactions([txn], dictionary)[0],
-    [dictionary]
-  )
+  // Process pending uncategorized transactions after categorization modal closes
+  const processPendingTransactions = useCallback(() => {
+    if (pendingUncategorized.current.length > 0) {
+      const nextTxn = pendingUncategorized.current.shift();
+      openCategorizeForm(nextTxn);
+    }
+  }, []);
 
-  const handleFileChange = async (e) => {
+  // CSV import - refactored for bulk processing
+  const handleFileChange = useCallback(async (e) => {
     const file = e.target.files[0]
     if (!file) return
     setLoading(true)
     setError('')
+    
     try {
       const raw = await parseCsvFile(file)
-      const txns = raw.map((r, i) => {
-        const tx = {
-          id: `${Date.now()}-${i}`,
-          date: r.date,
-          description: r.description,
-          amount: parseFloat(r.amount) || 0
-        }
-        const cat = assignCategory(tx).category
-        return { ...tx, category: cat }
-      })
-      const uncategorized = txns.find(tx => tx.category === 'Uncategorized')
-      setTransactions(prev => [...prev, ...txns.filter(tx => tx.category !== 'Uncategorized')])
-      if (uncategorized) openCategorizeForm(uncategorized)
+      const { categorized, uncategorized } = processImportedTransactions(raw, dictionary);
+      
+      // Add all categorized transactions in bulk
+      if (categorized.length > 0) {
+        setTransactions(prev => [...prev, ...categorized]);
+      }
+      
+      // Queue uncategorized transactions for processing
+      if (uncategorized.length > 0) {
+        pendingUncategorized.current = uncategorized;
+        openCategorizeForm(uncategorized[0]);
+      }
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }
+  }, [dictionary]);
 
-  const openAddForm = () => {
-    setNewEntry({ date: '', description: '', amount: '' })
-    setShowAddForm(true)
-  }
+  // Add-entry form handlers
+  const openAddForm = useCallback(() => {
+    setNewEntry({ date: '', description: '', amount: '' });
+    setShowAddForm(true);
+  }, []);
 
-  const saveNewEntry = () => {
-    const entry = {
-      id: `${Date.now()}`,
-      ...newEntry,
-      amount: parseFloat(newEntry.amount) || 0
+  const saveNewEntry = useCallback(() => {
+    const entry = createTransaction(newEntry);
+    const categorized = recategorizeTransaction(entry, dictionary);
+    
+    if (categorized.category === 'Uncategorized') {
+      openCategorizeForm(entry);
+    } else {
+      setTransactions(prev => [...prev, categorized]);
+      setShowAddForm(false);
     }
-    const cat = assignCategory(entry).category
-    if (cat === 'Uncategorized') openCategorizeForm(entry)
-    else {
-      setTransactions(prev => [...prev, { ...entry, category: cat }])
-      setShowAddForm(false)
-    }
-  }
+  }, [newEntry, dictionary]);
 
-  const openCategorizeForm = (txn = null) => {
-    setCategorizeTxn(txn)
-    setNewKeyword('')
-    setSelectedCategory('')
-    setNewCategoryName('')
-    setShowAddForm(false)
-    setShowCategorizeForm(true)
-  }
+  const cancelAdd = useCallback(() => setShowAddForm(false), []);
 
-  const saveCategorization = () => {
-    const updated = { ...dictionary }
-    let catName = selectedCategory
-    if (newCategoryName.trim()) {
-      catName = newCategoryName.trim()
-      updated[catName] = newKeyword.trim() ? [newKeyword.trim()] : []
-    } else if (selectedCategory && newKeyword.trim()) {
-      updated[selectedCategory] = [...(updated[selectedCategory] || []), newKeyword.trim()]
-    }
-    setDictionary(updated)
+  // Categorize modal handlers
+  const openCategorizeForm = useCallback((txn = null) => {
+    setCategorizeTxn(txn);
+    setNewKeyword('');
+    setSelectedCategory('');
+    setNewCategoryName('');
+    setShowAddForm(false);
+    setShowCategorizeForm(true);
+  }, []);
+
+  const saveCategorization = useCallback(() => {
+    const { updated, categoryName } = updateDictionary(
+      dictionary,
+      newKeyword,
+      selectedCategory,
+      newCategoryName
+    );
+    
+    setDictionary(updated);
 
     if (categorizeTxn) {
+      // Update the specific transaction
       setTransactions(prev =>
         prev.map(tx =>
-          tx.id === categorizeTxn.id ? { ...tx, category: catName } : tx
+          tx.id === categorizeTxn.id
+            ? { ...tx, category: categoryName }
+            : tx
         )
-      )
+      );
+      
+      // Check if this was a pending transaction
+      if (!transactions.find(tx => tx.id === categorizeTxn.id)) {
+        // It's a new transaction from import
+        setTransactions(prev => [...prev, { ...categorizeTxn, category: categoryName }]);
+      }
     }
-    setShowCategorizeForm(false)
-  }
+    
+    setShowCategorizeForm(false);
+    
+    // Process next pending transaction if any
+    processPendingTransactions();
+  }, [dictionary, newKeyword, selectedCategory, newCategoryName, categorizeTxn, transactions, processPendingTransactions]);
 
-  const handleUpdateTxn = (updatedTxn) => {
-    const recat = assignCategory(updatedTxn).category
-    const newTxn = { ...updatedTxn, category: recat }
+  const cancelCategorization = useCallback(() => {
+    setShowCategorizeForm(false);
+    // Clear pending queue if user cancels
+    pendingUncategorized.current = [];
+  }, []);
+
+  // Edit-save handler with recategorization
+  const handleUpdateTxn = useCallback((updatedTxn) => {
+    const recategorized = recategorizeTransaction(updatedTxn, dictionary);
+    
     setTransactions(prev =>
-      prev.map(tx => tx.id === newTxn.id ? newTxn : tx)
-    )
-    if (recat === 'Uncategorized') openCategorizeForm(newTxn)
-  }
+      prev.map(tx => tx.id === recategorized.id ? recategorized : tx)
+    );
+    
+    if (recategorized.category === 'Uncategorized') {
+      openCategorizeForm(recategorized);
+    }
+  }, [dictionary, openCategorizeForm]);
 
-  const handleDeleteTxn = (id) => {
-    setTransactions(prev => prev.filter(tx => tx.id !== id))
-  }
+  const handleDeleteTxn = useCallback((id) =>
+    setTransactions(prev => prev.filter(tx => tx.id !== id)),
+  []);
 
+  // Filtering & summarizing
   const { filteredTxns, filterError } = useMemo(() => {
     if (!query.trim()) return { filteredTxns: transactions, filterError: '' }
     try {
@@ -168,6 +393,7 @@ export default function App() {
       <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-4xl">
         <h1 className="text-4xl font-bold text-center mb-6">Expense Tracker</h1>
 
+        {/* Controls */}
         <div className="flex gap-4 justify-center mb-6">
           <button
             onClick={openAddForm}
@@ -183,16 +409,22 @@ export default function App() {
           </button>
         </div>
 
+        {/* CSV Upload */}
         <label className="block mb-6">
           <span className="sr-only">Upload CSV</span>
           <input
             type="file"
             accept=".csv"
             onChange={handleFileChange}
-            className="block w-full text-sm text-gray-700 bg-gray-50 file:bg-blue-600 file:text-white file:font-semibold file:py-2 file:px-4 file:rounded-md hover:file:bg-blue-700"
+            className="
+              block w-full text-sm text-gray-700 bg-gray-50
+              file:bg-blue-600 file:text-white file:font-semibold
+              file:py-2 file:px-4 file:rounded-md hover:file:bg-blue-700
+            "
           />
         </label>
 
+        {/* Search */}
         <input
           type="search"
           value={query}
@@ -218,119 +450,29 @@ export default function App() {
           <p className="text-center text-gray-500">No transactions to display.</p>
         )}
 
-        {showAddForm && (
-          <AddEntryModal
-            newEntry={newEntry}
-            setNewEntry={setNewEntry}
-            onCancel={() => setShowAddForm(false)}
-            onSave={saveNewEntry}
-          />
-        )}
+        {/* Add Entry Modal Component */}
+        <AddEntryModal
+          show={showAddForm}
+          entry={newEntry}
+          onEntryChange={setNewEntry}
+          onSave={saveNewEntry}
+          onCancel={cancelAdd}
+        />
 
-        {showCategorizeForm && (
-          <CategorizeModal
-            txn={categorizeTxn}
-            newKeyword={newKeyword}
-            setNewKeyword={setNewKeyword}
-            selectedCategory={selectedCategory}
-            setSelectedCategory={setSelectedCategory}
-            newCategoryName={newCategoryName}
-            setNewCategoryName={setNewCategoryName}
-            dictionary={dictionary}
-            onCancel={() => setShowCategorizeForm(false)}
-            onSave={saveCategorization}
-          />
-        )}
-      </div>
-    </div>
-  )
-}
-
-function AddEntryModal({ newEntry, setNewEntry, onCancel, onSave }) {
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
-        <h2 className="text-2xl font-bold mb-4">New Transaction</h2>
-        <label className="block mb-3">
-          <span className="block text-sm mb-1">Date</span>
-          <input
-            type="date"
-            value={newEntry.date}
-            onChange={e => setNewEntry(ne => ({ ...ne, date: e.target.value }))}
-            className="w-full p-2 border rounded-lg"
-          />
-        </label>
-        <label className="block mb-3">
-          <span className="block text-sm mb-1">Description</span>
-          <input
-            type="text"
-            value={newEntry.description}
-            onChange={e => setNewEntry(ne => ({ ...ne, description: e.target.value }))}
-            className="w-full p-2 border rounded-lg"
-          />
-        </label>
-        <label className="block mb-6">
-          <span className="block text-sm mb-1">Amount</span>
-          <input
-            type="number"
-            step="0.01"
-            value={newEntry.amount}
-            onChange={e => setNewEntry(ne => ({ ...ne, amount: e.target.value }))}
-            className="w-full p-2 border rounded-lg"
-          />
-        </label>
-        <div className="flex justify-end space-x-4">
-          <button onClick={onCancel} className="px-4 py-2 bg-gray-300 rounded-lg hover:bg-gray-400">Cancel</button>
-          <button onClick={onSave} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CategorizeModal({ txn, newKeyword, setNewKeyword, selectedCategory, setSelectedCategory, newCategoryName, setNewCategoryName, dictionary, onCancel, onSave }) {
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
-        <h2 className="text-2xl font-bold mb-4">
-          {txn ? `Categorize: ${txn.description}` : 'Add New Category'}
-        </h2>
-        <label className="block mb-3">
-          <span className="block text-sm mb-1">Keyword</span>
-          <input
-            type="text"
-            value={newKeyword}
-            onChange={e => setNewKeyword(e.target.value)}
-            className="w-full p-2 border rounded-lg"
-          />
-        </label>
-        <label className="block mb-3">
-          <span className="block text-sm mb-1">Existing Category</span>
-          <select
-            value={selectedCategory}
-            onChange={e => setSelectedCategory(e.target.value)}
-            className="w-full p-2 border rounded-lg mb-2"
-          >
-            <option value="">-- Select --</option>
-            {Object.keys(dictionary).map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
-        </label>
-        <label className="block mb-6">
-          <span className="block text-sm mb-1">Or New Category</span>
-          <input
-            type="text"
-            value={newCategoryName}
-            onChange={e => setNewCategoryName(e.target.value)}
-            placeholder="Enter new category name"
-            className="w-full p-2 border rounded-lg"
-          />
-        </label>
-        <div className="flex justify-end space-x-4">
-          <button onClick={onCancel} className="px-4 py-2 bg-gray-300 rounded-lg hover:bg-gray-400">Cancel</button>
-          <button onClick={onSave} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save</button>
-        </div>
+        {/* Categorize Modal Component */}
+        <CategorizeModal
+          show={showCategorizeForm}
+          transaction={categorizeTxn}
+          keyword={newKeyword}
+          selectedCategory={selectedCategory}
+          newCategoryName={newCategoryName}
+          dictionary={dictionary}
+          onKeywordChange={setNewKeyword}
+          onCategoryChange={setSelectedCategory}
+          onNewCategoryChange={setNewCategoryName}
+          onSave={saveCategorization}
+          onCancel={cancelCategorization}
+        />
       </div>
     </div>
   )
