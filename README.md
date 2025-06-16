@@ -1,65 +1,93 @@
-# Docker Dev Env for JS
+# Spending Tracker App
 
-# Running tests
+A React-based expense tracker that categorizes transactions using keyword dictionaries and supports fuzzy matching, CSV uploads, advanced filtering, and dynamic category management.
 
-This command builds a docker image with the code of this repository and runs the repository's tests
+## Features
 
-```sh
-./build_docker.sh my_app
-docker run -t my_app ./run_tests.sh
+- Keyword-based automatic categorization with fuzzy name resolution
+- Inline editing and deletion of transactions
+- CSV upload support with bulk import handling
+- Boolean query filtering (supports `AND`, `OR`, `NOT`)
+- Summary view by category
+- Add new categories and keywords via modal interface
+- LocalStorage persistence
+- Dockerized for easy development and testing
+
+---
+
+## Running in Docker
+
+### Build the Docker image
+
+```bash
+. build_docker.sh spending_tracker
+````
+
+---
+
+## Run Tests with Coverage
+
+```bash
+. build_docker.sh spending_categories && docker run --rm spending_categories ./run_tests.sh
 ```
 
-```
-[+] Building 0.1s (10/10) FINISHED                                                                   docker:default
- => [internal] load build definition from Dockerfile                                                           0.0s
- => => transferring dockerfile: 226B                                                                           0.0s
- => [internal] load metadata for docker.io/library/node:22.14.0-alpine3.21@sha256:9bef0ef1e268f60627da9ba7d76  0.0s
- => [internal] load .dockerignore                                                                              0.0s
- => => transferring context: 154B                                                                              0.0s
- => [1/5] FROM docker.io/library/node:22.14.0-alpine3.21@sha256:9bef0ef1e268f60627da9ba7d7605e8831d5b56ad0748  0.0s
- => [internal] load build context                                                                              0.0s
- => => transferring context: 1.07kB                                                                            0.0s
- => CACHED [2/5] WORKDIR /app                                                                                  0.0s
- => CACHED [3/5] COPY package.json package-lock.json .                                                         0.0s
- => CACHED [4/5] RUN npm install                                                                               0.0s
- => CACHED [5/5] COPY . .                                                                                      0.0s
- => exporting to image                                                                                         0.0s
- => => exporting layers                                                                                        0.0s
- => => writing image sha256:80007dbaeba9813527f4a4e663e6d773256f6e42f1b3c3fdf713fe45b4897c2f                   0.0s
- => => naming to docker.io/library/my_app                                                                      0.0s
+This runs the test suite with coverage using:
 
+```bash
+#!/bin/sh
 
-> my-react-app@0.0.0 test
-> vitest
-
-
- RUN  v3.1.1 /app
-
- ✓ src/App.test.jsx (2 tests) 176ms
- ✓ test/basic.test.js (3 tests) 6ms
- ✓ test/suite.test.js (3 tests) 7ms
-
- Test Files  3 passed (3)
-      Tests  8 passed (8)
-   Start at  22:08:27
-   Duration  3.74s (transform 93ms, setup 361ms, collect 282ms, tests 190ms, environment 1.95s, prepare 392ms)
+export CI=true
+npm run coverage
 ```
 
-# Running a specific test
+---
 
-This example runs all tests matching the name "basic":
+## Run in Development Mode
 
-```sh
-./build_docker.sh my_app
-docker run -t my_app ./run_tests.sh basic
+```bash
+. build_docker.sh spending_tracker && docker run --rm -it -p 5173:5173 spending_tracker ./run_dev.sh
 ```
 
+This runs the app in development mode and binds it to `localhost:5173`.
 
-# Running a vite dev server
+```bash
+#!/bin/sh
 
-Run this command to enable hot reloading via docker.
-
-```sh
-./build_docker.sh my_app
-docker run --network=host -v .:/app -it my_app npm exec vite dev --host
+export CI=true
+npm run dev -- --host 0.0.0.0
 ```
+
+---
+
+## Project Structure
+
+```
+src/
+├── App.jsx                # Main application logic and UI
+├── analysis.js            # Categorization, filtering, and summarization logic
+├── dataLoader.js          # CSV parsing logic
+├── TransactionTable.jsx   # Table for displaying and editing transactions
+├── SummaryTable.jsx       # Category total summaries
+```
+
+---
+
+## Requirements
+
+* Docker
+* Node.js and npm (inside Docker only)
+* CSV file with headers: `date`, `description`, `amount`
+
+---
+
+## Notes
+
+* Transactions and category dictionary are stored in browser `localStorage`
+* To reset data, clear localStorage or rebuild with a fresh state
+* Modals and core logic are designed for easy unit testing
+
+---
+
+## License
+
+MIT – use it, modify it, share it.
