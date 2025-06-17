@@ -240,3 +240,83 @@ describe('App – recategorization on edit', () => {
     expect(within(newRow).getByText('Coffee')).toBeInTheDocument()
   })
 })
+
+describe('createTransaction – business logic', () => {
+  it('creates a transaction object with a numeric amount', () => {
+    const input = { date: '2025-06-01', description: 'Test', amount: '42.5' }
+    const txn = createTransaction(input, 3)
+    expect(txn).toEqual({
+      id: expect.stringContaining('3'),
+      date: '2025-06-01',
+      description: 'Test',
+      amount: 42.5
+    })
+  })
+
+  it('defaults to 0 if amount is not a number', () => {
+    const txn = createTransaction({ date: '2025-06-01', description: 'Bad', amount: 'x' })
+    expect(txn.amount).toBe(0)
+  })
+})
+
+describe('processImportedTransactions – business logic', () => {
+  it('splits transactions into categorized and uncategorized', () => {
+    const input = [
+      { date: '2025-01-01', description: 'Shell', amount: 50 },
+      { date: '2025-01-02', description: 'Mystery', amount: 12 }
+    ]
+    const dict = { Gas: ['shell'] }
+    const { categorized, uncategorized } = processImportedTransactions(input, dict)
+    
+    expect(categorized).toHaveLength(1)
+    expect(uncategorized).toHaveLength(1)
+    expect(categorized[0].category).toBe('Gas')
+    expect(uncategorized[0].category).toBe('Uncategorized')
+  })
+})
+
+describe('recategorizeTransaction – business logic', () => {
+  it('re-categorizes a single transaction based on dictionary', () => {
+    const txn = { id: '1', date: '2025-01-01', description: 'Exxon', amount: 20 }
+    const dict = { Gas: ['exxon'] }
+    const result = recategorizeTransaction(txn, dict)
+    expect(result.category).toBe('Gas')
+  })
+
+  it('returns Uncategorized if no match', () => {
+    const txn = { id: '2', date: '2025-01-02', description: 'Random', amount: 5 }
+    const dict = { Food: ['burger'] }
+    const result = recategorizeTransaction(txn, dict)
+    expect(result.category).toBe('Uncategorized')
+  })
+})
+
+describe('updateDictionary – business logic', () => {
+  it('adds keyword to an existing category', () => {
+    const dict = { Gas: ['shell'] }
+    const result = updateDictionary(dict, 'exxon', 'Gas', '')
+    expect(result).toEqual({
+      updated: { Gas: ['shell', 'exxon'] },
+      categoryName: 'Gas'
+    })
+  })
+
+  it('creates a new category with keyword', () => {
+    const dict = { Coffee: ['starbucks'] }
+    const result = updateDictionary(dict, 'dunkin', '', 'Cafes')
+    expect(result).toEqual({
+      updated: { Coffee: ['starbucks'], Cafes: ['dunkin'] },
+      categoryName: 'Cafes'
+    })
+  })
+
+  it('creates a new empty category', () => {
+    const dict = { Coffee: ['peets'] }
+    const result = updateDictionary(dict, '', '', 'Tea')
+    expect(result).toEqual({
+      updated: { Coffee: ['peets'], Tea: [] },
+      categoryName: 'Tea'
+    })
+  })
+})
+
